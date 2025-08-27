@@ -9,9 +9,10 @@ from blackjack.player.player import Player
 
 
 class Action(Enum):
-    HIT = 0
-    STAND = 1
-    DOUBLE = 2
+    BET = 0
+    HIT = 1
+    STAND = 2
+    DOUBLE = 3
     #SPLIT = 3 # Splitting is not yet supported.
 
 
@@ -31,7 +32,7 @@ class BlackJack(gym.Env):
         self.player = Player(starting_balance=self.starting_balance)
         self.dealer = Player(dealer=True)
 
-        self.current_player_index = 0
+        self.is_bet_turn = True
         self.round_over = False
         self.reset()
 
@@ -44,6 +45,7 @@ class BlackJack(gym.Env):
                 "deck_remaining": gym.spaces.Box(low=0.0, high=1.0, shape=(), dtype=np.float32),  # game stat
                 "deck_card_probs": gym.spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32),  # game stat
                 "deck_draw_probs": gym.spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32),  # game stat
+                "is_bet_turn": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),  # game stat
             }
         )
 
@@ -68,12 +70,13 @@ class BlackJack(gym.Env):
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
-        self.deck.reset_deck()
+        if self.deck.deck_remaining < 0.25:
+            self.deck.reset()
         self.dealer.reset()
         self.player.reset()
-        self.current_player_index = 0
+        self.is_bet_turn = True
         self.round_over = False
-        self.deal_starting_hands()
+        #self.deal_starting_hands()
 
         return self._get_obs(), {}
 
@@ -92,7 +95,7 @@ class BlackJack(gym.Env):
             else:
                 break
 
-    def step(self, action: Action):
+    def step(self, action: dict):
         # I need to figure out my order of operations more before I do this.
         # I need each player to do their turn and then once were done have the dealer go,
         # then check if each player beat the dealer and get a reward for each player
@@ -100,7 +103,11 @@ class BlackJack(gym.Env):
         action = Action(action["action"])
         player_done = False
 
-        if action == Action.HIT.value:
+        if action == Action.BET:
+            self.set_bet(action["bet"])
+            self.deal_starting_hands()
+            self.is_bet_turn = False
+        elif action == Action.HIT.value:
             player_done = self._hit()
         elif action == Action.STAND.value:
             player_done = True
@@ -165,23 +172,24 @@ class BlackJack(gym.Env):
         dealer_one_hot_showing = [0] * 11
         if self.dealer_showing is not None:
             dealer_one_hot_showing[self.dealer_showing - 1] = 1
-        deck_remaining = len(self.deck) / (52 * self.num_decks)
         return {
             "player_total": np.array(player.one_hot_total, dtype=np.float32),
             "player_has_blackjack": np.array([int(player.has_blackjack)], dtype=np.float32),
             "player_is_soft": np.array([int(player.has_soft_ace)], dtype=np.float32),
             "dealer_showing": np.array(dealer_one_hot_showing, dtype=np.float32),
-            "deck_remaining": np.array(deck_remaining, dtype=np.float32),
+            "deck_remaining": np.array(self.deck.deck_remaining, dtype=np.float32),
             "deck_card_probs": np.array(self.deck.get_percentage(), dtype=np.float32),
-            "deck_draw_probs": np.array(self.deck.get_percentage(), dtype=np.float32),
+            "deck_draw_probs": np.array(self.deck.probability_of_drawing(), dtype=np.float32),
+            "is_bet_turn": np.array([int(self.is_bet_turn)], dtype=np.float32),
         }
 
     def get_legal_moves(self):
+        if self.is_bet_turn:
+            return [Action.BET]
+
         legal_moves = [Action.HIT, Action.STAND]
         if len(self.player.hand) == 2 and self.player.balance >= self.player.bet * 2:
             legal_moves.append(Action.DOUBLE)
-        #if len(current_player.hand) == 2 and current_player.hand[0] == current_player.hand[1]:
-        #    legal_moves.append(Action.SPLIT)
         return legal_moves
 
     def __repr__(self):

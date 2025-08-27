@@ -51,7 +51,7 @@ class Deck:
         random.shuffle(starting_deck)
         self.cards = starting_deck
 
-    def reset_deck(self) -> None:
+    def reset(self) -> None:
         """
         Resets the deck to its initial state by clearing the current cards
         :return: None
