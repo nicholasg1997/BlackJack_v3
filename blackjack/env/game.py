@@ -18,7 +18,7 @@ class Action(Enum):
 class BlackJack(gym.Env):
     def __init__(self, num_decks: int = 6, starting_balance: int = 1000,
                  dealer_hits_soft: bool = True, dealer_stay_value: int = 17,
-                 min_bet: int = 2, max_bet: int = 20, num_players: int = 1):
+                 min_bet: int = 2, max_bet: int = 20):
         super().__init__()
         self.num_decks = num_decks
         self.starting_balance = starting_balance
@@ -28,9 +28,7 @@ class BlackJack(gym.Env):
         self.max_bet = max_bet
 
         self.deck = Deck(num_decks=self.num_decks)
-        self.players = []
-        for _ in range(num_players):
-            self.players.append(Player(starting_balance=self.starting_balance))
+        self.player = Player(starting_balance=self.starting_balance)
         self.dealer = Player(dealer=True)
 
         self.current_player_index = 0
@@ -62,42 +60,22 @@ class BlackJack(gym.Env):
             return self.dealer.hand[0]
         return None
 
-    @property
-    def current_player(self):
-        return self.players[self.current_player_index % len(self.players)]
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
         self.deck.reset_deck()
         self.dealer.reset()
-        for player in self.players:
-            player.reset()
+        self.player.reset()
         self.current_player_index = 0
         self.round_over = False
         self.deal_starting_hands()
 
         return self._get_obs(), {}
 
-    def add_player(self, player):
-        self.players.append(player)
-
-    def add_players(self, players):
-        for player in players:
-            self.add_player(player)
-
-    def remove_player(self, player):
-        self.players.remove(player)
-
     def deal_starting_hands(self):
         for _ in range(2):
-            for player in self.players:
-                player.add_card(self.deck.draw_card())
+            self.player.add_card(self.deck.draw_card())
             self.dealer.add_card(self.deck.draw_card())
-
-    def set_bets(self, bets: list[float]):
-        for i, player in enumerate(self.players):
-            player.bet = bets[i]
-
 
     def dealer_autoplay(self):
         while True:
@@ -115,39 +93,36 @@ class BlackJack(gym.Env):
         # then check if each player beat the dealer and get a reward for each player
 
         action = Action(action["action"])
-        current_player = self.current_player
         player_done = False
 
         if action == Action.HIT.value:
-            player_done = self._hit(current_player)
+            player_done = self._hit()
         elif action == Action.STAND.value:
             player_done = True
         elif action == Action.DOUBLE.value:
-            player_done = self._double(current_player)
+            player_done = self._double()
 
         if player_done:
-            self.current_player_index += 1
-
-        self.round_over = self.current_player_index >= len(self.players)
+            self.round_over = True
         if self.round_over:
             self.dealer_autoplay()
-            rewards = self._get_reward()
+            reward = self._get_reward()
             done = True
-            obs = self._get_obs(player_index=0)
+            obs = self._get_obs()
         else:
-            rewards = [0] * len(self.players)
+            reward = 0
             obs = self._get_obs()
             done = False
-        return obs, rewards, done, False, {}
+        return obs, reward, done, False, {}
 
-    def _hit(self, current_player):
-        current_player.add_card(self.deck.draw_card())
-        return current_player.is_bust
+    def _hit(self):
+        self.player.add_card(self.deck.draw_card())
+        return self.player.is_bust
 
-    def _double(self, current_player):
-        assert len(current_player.hand) == 2, "Player must have 2 cards to double down."
-        assert current_player.balance >= current_player.bet * 2, "Player does not have enough balance to double down."
-        current_player.add_card(self.deck.draw_card())
+    def _double(self):
+        assert len(self.player.hand) == 2, "Player must have 2 cards to double down."
+        assert self.player.balance >= self.player.bet * 2, "Player does not have enough balance to double down."
+        self.player.add_card(self.deck.draw_card())
         return True
 
     def _split(self):
@@ -159,35 +134,29 @@ class BlackJack(gym.Env):
         # maybe ill just have a list or rewards
         dealer_total = self.dealer.hand_total
         rewards = []
+        player = self.player
+        if player.has_blackjack and not self.dealer.has_blackjack:
+            player.balance += int(1.5 * player.bet)
+            reward = 1.5 * player.bet
+        elif player.is_bust:
+            player.balance -= player.bet
+            reward = -1 * player.bet
+        elif self.dealer.is_bust:
+            player.balance += player.bet
+            reward = 1 * player.bet
+        elif player.hand_total > dealer_total:
+            player.balance += player.bet
+            reward = 1 * player.bet
+        elif player.hand_total < dealer_total:
+            player.balance -= player.bet
+            reward = -1 * player.bet
+        else:
+            reward = 0
+        return reward
 
-        for player in self.players:
-            if player.has_blackjack and not self.dealer.has_blackjack:
-                player.balance += int(1.5 * player.bet)
-                reward = 1.5 * player.bet
-            elif player.is_bust:
-                player.balance -= player.bet
-                reward = -1 * player.bet
-            elif self.dealer.is_bust:
-                player.balance += player.bet
-                reward = 1 * player.bet
-            elif player.hand_total > dealer_total:
-                player.balance += player.bet
-                reward = 1 * player.bet
-            elif player.hand_total < dealer_total:
-                player.balance -= player.bet
-                reward = -1 * player.bet
-            else:
-                reward = 0
-            rewards.append(reward)
-        return rewards
+    def _get_obs(self):
 
-    def _get_obs(self, player_index: Optional[int] = None):
-        if player_index is None:
-            player_index = self.current_player_index
-        if player_index >= len(self.players):
-            player_index = 0
-
-        player = self.players[player_index]
+        player = self.player
         dealer_one_hot_showing = [0] * 11
         if self.dealer_showing is not None:
             dealer_one_hot_showing[self.dealer_showing - 1] = 1
@@ -203,25 +172,19 @@ class BlackJack(gym.Env):
         }
 
     def get_legal_moves(self):
-        current_player = self.current_player
         legal_moves = [Action.HIT, Action.STAND]
-        if len(current_player.hand) == 2 and current_player.balance >= current_player.bet * 2:
+        if len(self.player.hand) == 2 and self.player.balance >= self.player.bet * 2:
             legal_moves.append(Action.DOUBLE)
         #if len(current_player.hand) == 2 and current_player.hand[0] == current_player.hand[1]:
         #    legal_moves.append(Action.SPLIT)
         return legal_moves
 
     def __repr__(self):
-        return f"BlackJack(num_decks={self.num_decks}, players={self.players}, dealer={self.dealer}, deck_remaining={len(self.deck)})"
+        return f"BlackJack(num_decks={self.num_decks}, dealer={self.dealer}, deck_remaining={len(self.deck)})"
 
 
 
 
 if __name__ == "__main__":
     game = BlackJack()
-    print(game)
-    print(game.deck)
-    game.dealer_autoplay()
-    print(game.current_player)
-    print(game._get_obs())
 
