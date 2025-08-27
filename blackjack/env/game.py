@@ -38,8 +38,8 @@ class BlackJack(gym.Env):
         self.observation_space = gym.spaces.Dict(
             {
                 "player_total": gym.spaces.Box(low=0, high=1, shape=(23,), dtype=np.float32),  # player stat (one hot encoded)
-                "player_has_blackjack": gym.spaces.Box(low=0, high=1, shape=(2,), dtype=np.float32), # player stat (one hot encoded)
-                "player_is_soft": gym.spaces.Box(low=0, high=1, shape=(2,), dtype=np.float32), # player stat (need a better name for this) (one hot encoded)
+                "player_has_blackjack": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32), # player stat (one hot encoded)
+                "player_is_soft": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32), # player stat (need a better name for this) (one hot encoded)
                 "dealer_showing": gym.spaces.Box(low=0, high=1, shape=(11,), dtype=np.float32),  # dealer stat (one hot encoded)
                 "deck_remaining": gym.spaces.Box(low=0.0, high=1.0, shape=(), dtype=np.float32),  # game stat
                 "deck_card_probs": gym.spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32),  # game stat
@@ -60,6 +60,11 @@ class BlackJack(gym.Env):
             return self.dealer.hand[0]
         return None
 
+    def set_bet(self, bet: float):
+        bet_amount = int(bet * (self.max_bet - self.min_bet) + self.min_bet)
+        if bet_amount > self.player.balance:
+            print(f"Bet amount is below minimum. Player has run out of money.")
+        self.player.bet = bet_amount
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
@@ -122,6 +127,7 @@ class BlackJack(gym.Env):
     def _double(self):
         assert len(self.player.hand) == 2, "Player must have 2 cards to double down."
         assert self.player.balance >= self.player.bet * 2, "Player does not have enough balance to double down."
+        self.player.bet *= 2
         self.player.add_card(self.deck.draw_card())
         return True
 
@@ -129,30 +135,29 @@ class BlackJack(gym.Env):
         pass
 
     def _get_reward(self):
-        # need to get reward for each player. maybe players should have a reward variable?
-        # maybe i will pass the agent instead of player which will have reward variable.
-        # maybe ill just have a list or rewards
         dealer_total = self.dealer.hand_total
-        rewards = []
         player = self.player
         if player.has_blackjack and not self.dealer.has_blackjack:
             player.balance += int(1.5 * player.bet)
-            reward = 1.5 * player.bet
+            reward = self._calculate_reward(1.5)
         elif player.is_bust:
             player.balance -= player.bet
-            reward = -1 * player.bet
+            reward = self._calculate_reward(-1)
         elif self.dealer.is_bust:
             player.balance += player.bet
-            reward = 1 * player.bet
+            reward = self._calculate_reward(1)
         elif player.hand_total > dealer_total:
             player.balance += player.bet
-            reward = 1 * player.bet
+            reward = self._calculate_reward(1)
         elif player.hand_total < dealer_total:
             player.balance -= player.bet
-            reward = -1 * player.bet
+            reward = self._calculate_reward(-1)
         else:
             reward = 0
         return reward
+
+    def _calculate_reward(self, result: float) -> float:
+        return result * self.player.bet
 
     def _get_obs(self):
 
