@@ -9,30 +9,31 @@ from blackjack.player.player import Player
 
 
 class Action(Enum):
-    BET = 0
-    HIT = 1
-    STAND = 2
-    DOUBLE = 3
+    HIT = 0
+    STAND = 1
+    DOUBLE = 2
     #SPLIT = 3 # Splitting is not yet supported.
 
 
 class BlackJack(gym.Env):
     def __init__(self, num_decks: int = 6, starting_balance: int = 1000,
                  dealer_hits_soft: bool = True, dealer_stay_value: int = 17,
-                 min_bet: int = 2, max_bet: int = 20):
+                 min_bet: int = 2, max_bet: int = 20, reshuffle_threshold: float = 0.25, bet_bins: int = 18):
         super().__init__()
         self.num_decks = num_decks
+        self.reshuffle_threshold = reshuffle_threshold
         self.starting_balance = starting_balance
         self.dealer_hits_soft_17 = dealer_hits_soft
         self.dealer_stay_value = dealer_stay_value
         self.min_bet = min_bet
         self.max_bet = max_bet
+        self.bet_bins = bet_bins
 
         self.deck = Deck(num_decks=self.num_decks)
         self.player = Player(starting_balance=self.starting_balance)
         self.dealer = Player(dealer=True)
 
-        self.is_bet_turn = True
+        self.is_betting_phase = True
         self.round_over = False
         self.reset()
 
@@ -45,16 +46,11 @@ class BlackJack(gym.Env):
                 "deck_remaining": gym.spaces.Box(low=0.0, high=1.0, shape=(), dtype=np.float32),  # game stat
                 "deck_card_probs": gym.spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32),  # game stat
                 "deck_draw_probs": gym.spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32),  # game stat
-                "is_bet_turn": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),  # game stat
+                "is_betting_phase": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32), # game stat
             }
         )
 
-        self.action_space = gym.spaces.Dict(
-            {
-                "action": gym.spaces.Discrete(len(Action)),
-                "bet": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
-            }
-        )
+        self.action_space = gym.spaces.MultiDiscrete([3, self.bet_bins])
 
     @property
     def dealer_showing(self):
@@ -64,19 +60,16 @@ class BlackJack(gym.Env):
 
     def set_bet(self, bet: float):
         bet_amount = int(bet * (self.max_bet - self.min_bet) + self.min_bet)
-        if bet_amount > self.player.balance:
-            print(f"Bet amount is below minimum. Player has run out of money.")
         self.player.bet = bet_amount
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
-        if self.deck.deck_remaining < 0.25:
+        if self.deck.deck_remaining < self.reshuffle_threshold:
             self.deck.reset()
         self.dealer.reset()
         self.player.reset()
-        self.is_bet_turn = True
         self.round_over = False
-        #self.deal_starting_hands()
+        self.is_betting_phase = True
 
         return self._get_obs(), {}
 
@@ -96,18 +89,18 @@ class BlackJack(gym.Env):
                 break
 
     def step(self, action: dict):
-        # I need to figure out my order of operations more before I do this.
-        # I need each player to do their turn and then once were done have the dealer go,
-        # then check if each player beat the dealer and get a reward for each player
+        action_idx, bet_idx = action
+        action = Action(action_idx)
+        bet = bet_idx / (self.bet_bins - 1)
+        if self.is_betting_phase:
+            self.set_bet(bet)
+            self.deal_starting_hands()
+            self.is_betting_phase = False
+            return self._get_obs(), 0, False, False, {}
 
-        action = Action(action["action"])
         player_done = False
 
-        if action == Action.BET:
-            self.set_bet(action["bet"])
-            self.deal_starting_hands()
-            self.is_bet_turn = False
-        elif action == Action.HIT.value:
+        if action == Action.HIT.value:
             player_done = self._hit()
         elif action == Action.STAND.value:
             player_done = True
@@ -120,12 +113,10 @@ class BlackJack(gym.Env):
             self.dealer_autoplay()
             reward = self._get_reward()
             done = True
-            obs = self._get_obs()
         else:
             reward = 0
-            obs = self._get_obs()
             done = False
-        return obs, reward, done, False, {}
+        return self._get_obs(), reward, done, False, {}
 
     def _hit(self):
         self.player.add_card(self.deck.draw_card())
@@ -133,7 +124,6 @@ class BlackJack(gym.Env):
 
     def _double(self):
         assert len(self.player.hand) == 2, "Player must have 2 cards to double down."
-        assert self.player.balance >= self.player.bet * 2, "Player does not have enough balance to double down."
         self.player.bet *= 2
         self.player.add_card(self.deck.draw_card())
         return True
@@ -145,29 +135,26 @@ class BlackJack(gym.Env):
         dealer_total = self.dealer.hand_total
         player = self.player
         if player.has_blackjack and not self.dealer.has_blackjack:
-            player.balance += int(1.5 * player.bet)
-            reward = self._calculate_reward(1.5)
+            result = 1.5
         elif player.is_bust:
-            player.balance -= player.bet
-            reward = self._calculate_reward(-1)
+            result = -1
         elif self.dealer.is_bust:
-            player.balance += player.bet
-            reward = self._calculate_reward(1)
+            result = 1
         elif player.hand_total > dealer_total:
-            player.balance += player.bet
-            reward = self._calculate_reward(1)
+            result = 1
         elif player.hand_total < dealer_total:
-            player.balance -= player.bet
-            reward = self._calculate_reward(-1)
+            result = -1
         else:
-            reward = 0
+            result = 0
+
+        player.balance += self._calculate_reward(result)
+        reward = result * (self.player.bet / self.max_bet)
         return reward
 
     def _calculate_reward(self, result: float) -> float:
         return result * self.player.bet
 
     def _get_obs(self):
-
         player = self.player
         dealer_one_hot_showing = [0] * 11
         if self.dealer_showing is not None:
@@ -180,17 +167,23 @@ class BlackJack(gym.Env):
             "deck_remaining": np.array(self.deck.deck_remaining, dtype=np.float32),
             "deck_card_probs": np.array(self.deck.get_percentage(), dtype=np.float32),
             "deck_draw_probs": np.array(self.deck.probability_of_drawing(), dtype=np.float32),
-            "is_bet_turn": np.array([int(self.is_bet_turn)], dtype=np.float32),
+            "is_betting_phase": np.array([int(self.is_betting_phase)], dtype=np.float32),
         }
 
     def get_legal_moves(self):
-        if self.is_bet_turn:
-            return [Action.BET]
-
+        if self.is_betting_phase:
+            return []
         legal_moves = [Action.HIT, Action.STAND]
-        if len(self.player.hand) == 2 and self.player.balance >= self.player.bet * 2:
+        if len(self.player.hand) == 2:
             legal_moves.append(Action.DOUBLE)
         return legal_moves
+
+    def get_action_mask(self):
+        legal_actions = np.zeros(len(Action), dtype=np.float32)
+        action_mask = self.get_legal_moves()
+        for action in action_mask:
+            legal_actions[action.value] = 1.0
+        return legal_actions
 
     def __repr__(self):
         return f"BlackJack(num_decks={self.num_decks}, dealer={self.dealer}, deck_remaining={len(self.deck)})"
@@ -199,5 +192,8 @@ class BlackJack(gym.Env):
 
 
 if __name__ == "__main__":
-    game = BlackJack()
+    from gymnasium.utils.env_checker import check_env
+    import gymnasium as gym
+    env = BlackJack()
+    check_env(env)
 
