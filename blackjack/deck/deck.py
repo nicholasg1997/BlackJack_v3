@@ -1,7 +1,7 @@
 import random
 from collections import Counter
-
 import numpy as np
+import torch as th
 
 class Deck:
     """
@@ -21,11 +21,31 @@ class Deck:
     :ivar cards: The list of current cards in the deck.
     :type cards: list[int]
     """
-    def __init__(self, num_decks:int=1, rounding_precision:int=3):
+    def __init__(self, num_decks:int=1, rounding_precision:int=3, learn_count:bool=False):
         self.rounding_precision = rounding_precision
         self.num_decks = num_decks
         self.cards: list[int] = []
+        self.running_count: float = 0.0
+        self.learn_count = learn_count
+        if self.learn_count:
+            self.card_weights = th.nn.Parameter(th.zeros(10, dtype=th.float32))
+            th.nn.init.uniform_(self.card_weights, -0.1, 0.1)
+        else:
+            self.card_weights = th.Tensor([1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, -1.0, -1.0])
         self.create_deck()
+
+    @property
+    def true_count(self) -> float:
+        if len(self.cards) == 0:
+            return 0.0
+        decks_remaining = len(self.cards) / 52
+        return round(self.running_count/decks_remaining, self.rounding_precision)
+
+    def _get_card_weights(self, card: int) -> float:
+        weight = self.card_weights[card-2]
+        if self.learn_count:
+            weight = th.clamp(weight, -2.0, 2.0)
+        return weight.item()
 
     @property
     def deck_remaining(self) -> float:
@@ -50,6 +70,7 @@ class Deck:
         starting_deck *= self.num_decks
         random.shuffle(starting_deck)
         self.cards = starting_deck
+        self.running_count = 0.0
 
     def reset(self) -> None:
         """
@@ -72,7 +93,9 @@ class Deck:
         :return:
         """
         assert len(self.cards) > 0, "No cards left in the deck."
-        return self.cards.pop()
+        card = self.cards.pop()
+        self.running_count += self._get_card_weights(card)
+        return card
 
     def draw_cards(self, num_cards: int) -> list[int]:
         """
@@ -82,7 +105,8 @@ class Deck:
         """
         assert len(self.cards) >= num_cards, "Not enough cards left in the deck."
         assert num_cards > 0, "Number of cards to draw must be greater than 0."
-        return [self.cards.pop() for _ in range(num_cards)]
+        drawn = [self.draw_card() for _ in range(num_cards)]
+        return drawn
 
     def get_percentage(self) -> np.ndarray:
         """
@@ -112,6 +136,11 @@ class Deck:
             idx = i - 2
             percentages[idx] = (self.cards.count(i) / total)
         return np.round(percentages, self.rounding_precision)
+
+    def get_parameters(self):
+        if self.learn_count:
+            return {"card_weights": self.card_weights}
+        return {}
 
     def __repr__(self):
         return f"Deck(num_decks={self.num_decks}, cards={self.cards})"

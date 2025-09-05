@@ -2,6 +2,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 from gymnasium.core import ObsType, WrapperObsType, ActType, WrapperActType
+from blackjack.env.game import Action
 
 
 class FlattenObsWrapper(gym.ObservationWrapper):
@@ -31,10 +32,13 @@ class MaskWrapper(gym.Wrapper):
     def get_action_mask(self) -> np.ndarray:
         base_env = self._get_base_env()
         if base_env.is_betting_phase:
-            return [np.zeros(base_env.action_space.nvec[0], dtype=np.float32),
-                    np.ones(base_env.action_space.nvec[1], dtype=np.float32)]
+            bet_only_mask = np.zeros(base_env.action_space.nvec[0], dtype=np.float32)
+            bet_only_mask[Action.BET.value] = 1.0
+            return [bet_only_mask, np.ones(base_env.action_space.nvec[1], dtype=np.float32)]
         legal_mask = np.zeros(base_env.action_space.nvec[0], dtype=np.float32)
         legal_moves = base_env.get_legal_moves()
         for move in legal_moves:
             legal_mask[move.value] = 1.0
-        return [legal_mask, np.ones(base_env.action_space.nvec[1], dtype=np.float32)]
+        bet_mask = np.zeros(base_env.action_space.nvec[1], dtype=np.float32)
+        bet_mask[0] = 1.0
+        return [legal_mask, bet_mask]
