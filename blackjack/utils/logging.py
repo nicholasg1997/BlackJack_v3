@@ -76,7 +76,7 @@ class ReturnMetricsCallback(BaseCallback):
 
         for i, done in enumerate(dones):
             if done:
-                self.total_winnings += rewards[i]
+                self.total_winnings += infos[i]['winnings']
                 if 'bet_placed' in infos[i]:
                     self.total_wagered += infos[i]['bet_placed']
                 self.num_episodes += 1
