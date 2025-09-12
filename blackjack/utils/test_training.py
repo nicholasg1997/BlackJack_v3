@@ -8,8 +8,7 @@ import gymnasium as gym
 from stable_baselines3.common.callbacks import BaseCallback
 import math
 
-from stable_baselines3.common.callbacks import EvalCallback
-
+from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 def exponential_decay_schedule(initial_value: float, final_value: float, decay_rate: float):
     def schedule(progress_remaining: float) -> float:
         return final_value + (initial_value - final_value) * math.exp(-decay_rate * (1 - progress_remaining))
@@ -58,10 +57,11 @@ def main():
     vec_env = VecNormalize(vec_env, norm_reward=True, norm_obs=True, gamma=0.99)
 
     eval_env = SubprocVecEnv([make_blackjack_env() for _ in range(128)])
-    eval_env = VecNormalize(eval_env, norm_reward=True, norm_obs=True, gamma=0.99)
+    eval_env = VecNormalize(eval_env, norm_reward=True,
+                            norm_obs=True, gamma=0.99, training=False)
     eval_env.seed(42)
 
-    eval_callback = EvalCallback(
+    eval_callback = MaskableEvalCallback(
         eval_env,
         best_model_save_path="./logs/best_model/",
         log_path="./logs/eval_logs/",
