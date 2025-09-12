@@ -2,128 +2,107 @@ from sb3_contrib.common.wrappers import ActionMasker
 
 from blackjack.env.game import BlackJack
 from blackjack.utils.logging import BlackjackMetricsCallback, ReturnMetricsCallback
-from blackjack.custom_policies.CustomAC import CustomBlackjackPolicy
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
-from stable_baselines3.common.utils import LinearSchedule
-import logging
-import torch as th
+import gymnasium as gym
+from stable_baselines3.common.callbacks import BaseCallback
+import math
 
-def mask_fn(env: BlackJack):
-    mask = env.get_action_mask()
-    logging.debug(f"Action mask: {mask}")  # Debug: Shape (22,)
-    return mask
+from stable_baselines3.common.callbacks import EvalCallback
 
-def make_blackjack_env(fixed_bet=None, num_decks=6):
+def exponential_decay_schedule(initial_value: float, final_value: float, decay_rate: float):
+    def schedule(progress_remaining: float) -> float:
+        return final_value + (initial_value - final_value) * math.exp(-decay_rate * (1 - progress_remaining))
+    return schedule
+
+class EntropyScheduleCallback(BaseCallback):
+    def __init__(self, initial_ent_coef=0.1, final_ent_coef=0.001, decay_steps=10_000_000):
+        super().__init__()
+        self.initial_ent_coef = initial_ent_coef
+        self.final_ent_coef = final_ent_coef
+        self.decay_steps = decay_steps
+
+    def _on_step(self):
+        progress = 1.0 - (self.num_timesteps / self.decay_steps)
+        progress = max(0.0, min(1.0, progress))
+        ent_coef = self.initial_ent_coef * progress + self.final_ent_coef * (1 - progress)
+        self.model.ent_coef = ent_coef
+        self.logger.record("entropy/ent_coef", ent_coef)
+        return True
+
+def mask_fn(env: gym.Env):
+    return env.get_action_mask()
+
+
+def make_blackjack_env():
     def _init():
-        env = BlackJack(fixed_bet=fixed_bet, num_decks=num_decks)
+        env = BlackJack(num_decks=6)
         env = ActionMasker(env, mask_fn)
-        obs, _ = env.reset()
-        logging.debug(f"Observation keys: {list(obs.keys())}")
         return env
+
     return _init
+
 
 def main():
     NUM_ENVS = 64
+    TOTAL_TIMESTEPS = 40_000_000
+    initial_ent_coef = 0.5
+    final_ent_coef = 0.005
+
     POLICY_KWARGS = dict(
-        net_arch=dict(pi=[128, 64], vf=[128, 64]),
-        optimizer_class=th.optim.AdamW,
-        optimizer_kwargs=dict(weight_decay=1e-5)
+        net_arch=dict(pi=[256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
     )
 
-    logging.basicConfig(level=logging.INFO)
+    print("--- Setting up environment for training ---")
+    vec_env = SubprocVecEnv([make_blackjack_env() for _ in range(NUM_ENVS)])
+    vec_env = VecNormalize(vec_env, norm_reward=True, norm_obs=True, gamma=0.99)
 
-    # Phase 1: Basic Strategy (Game Actions)
-    print("--- Starting Phase 1: Basic Strategy ---")
-    vec_env_p1 = SubprocVecEnv([make_blackjack_env(fixed_bet=11) for _ in range(NUM_ENVS)])
-    vec_env_p1 = VecNormalize(vec_env_p1, norm_reward=True, norm_obs=True, gamma=0.99)
+    eval_env = SubprocVecEnv([make_blackjack_env() for _ in range(128)])
+    eval_env = VecNormalize(eval_env, norm_reward=True, norm_obs=True, gamma=0.99)
+    eval_env.seed(42)
+
+    eval_callback = EvalCallback(
+        eval_env,
+        best_model_save_path="./logs/best_model/",
+        log_path="./logs/eval_logs/",
+        eval_freq=100_000,
+        n_eval_episodes=128,
+        deterministic=True,
+        render=False,
+    )
 
     model = MaskablePPO(
-        CustomBlackjackPolicy,
-        vec_env_p1,
-        learning_rate=LinearSchedule(3e-4, 1e-5, 1.0),
+        "MultiInputPolicy",
+        vec_env,
+        learning_rate=exponential_decay_schedule(initial_value=3e-4, final_value=1e-5, decay_rate=5.0),
         n_steps=2048,
         batch_size=256,
-        n_epochs=10,
+        n_epochs=20,
         gamma=0.99,
-        gae_lambda=0.95,
+        gae_lambda=0.98,
         clip_range=0.2,
-        max_grad_norm=0.5,
-        ent_coef=0.05,
+        vf_coef=0.75,
+        ent_coef=initial_ent_coef,
         verbose=1,
-        tensorboard_log="./logs/",
+        tensorboard_log="./logs/blackjack_ppo_shaped/",
         policy_kwargs=POLICY_KWARGS,
     )
-    # Freeze card_weights and bet_head
-    model.policy.card_weights.requires_grad = False
 
-    print("Starting Phase 1 training...")
+    print(f"--- Starting end-to-end training for {TOTAL_TIMESTEPS} timesteps ---")
+
     model.learn(
-        total_timesteps=8_000_000,
+        total_timesteps=TOTAL_TIMESTEPS,
         use_masking=True,
-        callback=[BlackjackMetricsCallback(), ReturnMetricsCallback()]
+        callback=[BlackjackMetricsCallback(), ReturnMetricsCallback(),
+                  EntropyScheduleCallback(initial_ent_coef, final_ent_coef, int(TOTAL_TIMESTEPS*0.5)),
+                  eval_callback],
     )
 
-    model.save("phase1_basic_strategy.zip")
-    vec_env_p1.save("vec_normalize_stats.pkl")
-    vec_env_p1.close()
+    print("--- Training complete ---")
+    model.save("blackjack_agent_shaped_reward.zip")
+    vec_env.save("vec_normalize_stats_shaped.pkl")
+    vec_env.close()
 
-    # Phase 2: Card Counting and Betting
-    print("\n--- Starting Phase 2: Card Counting and Betting ---")
-    vec_env_p2 = SubprocVecEnv([make_blackjack_env(fixed_bet=None) for _ in range(NUM_ENVS)])
-    vec_env_p2 = VecNormalize.load("vec_normalize_stats.pkl", vec_env_p2)
-    vec_env_p2.norm_reward = True  # Re-enable for stability
-    vec_env_p2.norm_obs = True
-    vec_env_p2.training = True
-
-    model = MaskablePPO.load("phase1_basic_strategy.zip", env=vec_env_p2)
-    # Freeze game_head, unfreeze card_weights and bet_head
-    for param in model.policy.game_head.parameters():
-        param.requires_grad = False
-    model.policy.card_weights.requires_grad = True
-    for param in model.policy.bet_head.parameters():
-        param.requires_grad = True
-    model.learning_rate = LinearSchedule(1e-4, 1e-5, 1.0)
-    model.ent_coef = 0.15
-
-    print("Starting Phase 2 training...")
-    model.learn(
-        total_timesteps=5_000_000,
-        use_masking=True,
-        callback=[BlackjackMetricsCallback(), ReturnMetricsCallback()]
-    )
-
-    model.save("phase2_betting.zip")
-    vec_env_p2.save("vec_normalize_stats.pkl")
-    vec_env_p2.close()
-
-    # Phase 3: Fine-Tuning
-    print("\n--- Starting Phase 3: Fine-Tuning ---")
-    vec_env_p3 = SubprocVecEnv([make_blackjack_env(fixed_bet=None) for _ in range(NUM_ENVS)])
-    vec_env_p3 = VecNormalize.load("vec_normalize_stats.pkl", vec_env_p3)
-    vec_env_p3.norm_reward = True
-    vec_env_p3.norm_obs = True
-    vec_env_p3.training = True
-
-    model = MaskablePPO.load("phase2_betting.zip", env=vec_env_p3)
-    # Unfreeze all parameters
-    for param in model.policy.parameters():
-        param.requires_grad = True
-    model.learning_rate = LinearSchedule(1e-5, 1e-6, 1.0)
-    model.ent_coef = 0.15
-
-    print("Starting Phase 3 training...")
-    model.learn(
-        total_timesteps=5_000_000,
-        use_masking=True,
-        callback=[BlackjackMetricsCallback(), ReturnMetricsCallback()]
-    )
-
-    model.save("phase3_finetune.zip")
-    vec_env_p3.save("vec_normalize_stats.pkl")
-    vec_env_p3.close()
-
-    print("Final card weights:", model.policy.card_weights.detach().cpu().numpy())
 
 if __name__ == "__main__":
     main()
