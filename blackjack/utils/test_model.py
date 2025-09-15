@@ -10,7 +10,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-MODEL_PATH = "blackjack_agent_shaped_reward.zip"
+#MODEL_PATH = "blackjack_agent_shaped_reward.zip"
+MODEL_PATH = "logs/best_model/best_model.zip"
 VEC_NORMALIZE_PATH = "vec_normalize_stats_shaped.pkl"
 
 def mask_fn(env: gym.Env):
@@ -25,7 +26,7 @@ def make_blackjack_env(num_decks=6):
     return _init
 
 def evaluate(num_episodes=1_000):
-    venv = DummyVecEnv([lambda: BlackJack(num_decks=6)])
+    venv = DummyVecEnv([lambda: BlackJack(num_decks=1)])
     venv = VecNormalize.load(VEC_NORMALIZE_PATH, venv)
     venv.training = False
     venv.norm_reward = False
@@ -43,7 +44,8 @@ def evaluate(num_episodes=1_000):
         for ep in range(num_episodes):
             done = False
             while not done:
-                action, _states = model.predict(obs, deterministic=True, action_masks=venv.get_attr("get_action_mask")[0]())
+                action, _states = model.predict(obs, deterministic=True,
+                                                action_masks=venv.get_attr("get_action_mask")[0]())
                 obs, reward, done, info = venv.step(action)
                 if info[0].get('bet_placed', False):
                     placed_bets.append(info[0]['bet_placed'])
