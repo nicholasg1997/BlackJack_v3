@@ -12,6 +12,16 @@ class BlackjackMetricsCallback(BaseCallback):
         self.episode_count = 0
         self.step_count = 0
 
+    def _on_rollout_start(self) -> None:
+        self.balance_sum = 0
+        self.wins = 0
+        self.losses = 0
+        self.pushes = 0
+        self.busts = 0
+        self.bet_sum = 0
+        self.episode_count = 0
+        self.step_count = 0
+
     def _on_step(self):
         infos = self.locals["infos"]
         for info in infos:
@@ -43,15 +53,6 @@ class BlackjackMetricsCallback(BaseCallback):
             self.logger.record("blackjack/bust_rate", bust_rate)
             self.logger.record("blackjack/avg_bet", avg_bet)
             self.logger.record("blackjack/draw_rate", draw_rate)
-            # Reset for next rollout
-            self.balance_sum = 0
-            self.wins = 0
-            self.losses = 0
-            self.pushes = 0
-            self.busts = 0
-            self.bet_sum = 0
-            self.episode_count = 0
-            self.step_count = 0
 
         return True
 
@@ -62,6 +63,15 @@ class ReturnMetricsCallback(BaseCallback):
         self.total_wagered = 0
         self.num_episodes = 0
         self.num_rollouts = 0
+        self.ev_per_hand = 0
+        self.roi = 0
+
+    def reset(self):
+        self.total_winnings = 0
+        self.total_wagered = 0
+        self.num_episodes = 0
+        self.ev_per_hand = 0
+        self.roi = 0
 
     def _on_rollout_start(self) -> None:
         self.total_winnings = 0
@@ -86,7 +96,9 @@ class ReturnMetricsCallback(BaseCallback):
 
     def _on_rollout_end(self) -> None:
         if self.num_episodes > 0:
-            ev_per_hand = self.total_winnings / self.num_episodes
-            roi = self.total_winnings / self.total_wagered if self.total_wagered > 0 else 0
-            self.logger.record("blackjack/ev_per_hand", ev_per_hand)
-            self.logger.record("blackjack/roi", roi)
+            self.ev_per_hand = self.total_winnings / self.num_episodes
+            self.roi = self.total_winnings / self.total_wagered if self.total_wagered > 0 else 0
+            self.logger.record("blackjack/ev_per_hand", self.ev_per_hand)
+            self.logger.record("blackjack/roi", self.roi)
+            if 'eval_env' in self.locals:
+                self.locals['eval_ev'] = self.ev_per_hand
