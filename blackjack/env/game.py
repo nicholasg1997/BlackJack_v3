@@ -46,11 +46,12 @@ class Action(Enum):
 
 #TODO: improve reward shaping.
 class BlackJack(gym.Env):
-    def __init__(self, num_decks: int = 6, starting_balance: int = 1000,
+    def __init__(self, num_decks: int = 0, starting_balance: int = 1000,
                  dealer_hits_soft: bool = True, dealer_stay_value: int = 17,
-                 min_bet: int = 2, max_bet: int = 10, reshuffle_threshold: float = 0.25, fixed_bet: Optional[int] = None):
+                 min_bet: int = 2, max_bet: int = 10, reshuffle_threshold: float = 0.25,
+                 fixed_bet: Optional[int] = None):
         super().__init__()
-        self.num_decks = num_decks
+        self.num_decks = np.random.randint(2, 7) if num_decks == 0 else num_decks
         self.reshuffle_threshold = reshuffle_threshold
         self.starting_balance = starting_balance
         self.dealer_hits_soft_17 = dealer_hits_soft
@@ -68,7 +69,6 @@ class BlackJack(gym.Env):
         self.is_betting_phase = True
         self.round_over = False
 
-
         self.observation_space = gym.spaces.Dict(
             {
                 "player_total": gym.spaces.Box(low=0, high=1, shape=(23,), dtype=np.float32),
@@ -78,13 +78,12 @@ class BlackJack(gym.Env):
                 "deck_remaining": gym.spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
                 "deck_draw_probs": gym.spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32),
                 "is_betting_phase": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
-                "seen_card_counts": gym.spaces.Box(low=0, high=4 * self.num_decks, shape=(10,), dtype=np.float32),
+                "seen_card_counts": gym.spaces.Box(low=0, high=1, shape=(10,), dtype=np.float32),
                 "can_double": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
                 "true_count": gym.spaces.Box(low=-20, high=20, shape=(1,), dtype=np.float32),
             }
         )
         self.action_space = gym.spaces.Discrete(len(Action) + self.bet_bins)
-
         self.reset()
 
     @property
@@ -132,6 +131,7 @@ class BlackJack(gym.Env):
 
     def step(self, action: int):
         info = {}
+        reward = 0
 
         if self.is_betting_phase:
             if action < len(Action):
@@ -139,28 +139,39 @@ class BlackJack(gym.Env):
             bet_index = action - len(Action)
             bet_amount = bet_index + self.min_bet
             self.player.bet = bet_amount
-
             self.deal_starting_hand()
             self.is_betting_phase = False
             info["bet_placed"] = self.player.bet
             true_count = self.card_counter.true_count(self.deck.deck_remaining, self.num_decks)
             normalized_bet = (bet_amount - self.min_bet) / (self.max_bet - self.min_bet)
-
             alpha = 0.05
             shaped_reward = alpha * true_count * normalized_bet
-
             return self._get_obs(), shaped_reward, False, False, info
 
         if action >= len(Action):
             raise ValueError(f"Invalid action during play phase: {action}")
+
         action = Action(action)
 
         if action == Action.HIT:
+            old_total = self.player.hand_total
             player_done = self._hit()
             info['action'] = Action.HIT.value
+            new_total = self.player.hand_total
+            delta_total = new_total - old_total
+            if player_done:  # busted
+                hit_reward = -0.2
+            elif delta_total > 0:
+                hit_reward = np.clip(delta_total / 21.0, 0, 0.1)
+            else:  # something unexpected
+                hit_reward = 0
+            reward = hit_reward
+
         elif action == Action.STAND:
+            reward = 0.005
             player_done = True
             info['action'] = Action.STAND.value
+
         elif action == Action.DOUBLE:
             player_done = self._double()
             info['action'] = Action.DOUBLE.value
@@ -174,11 +185,9 @@ class BlackJack(gym.Env):
             reward = self._get_reward(info)
             done = True
         else:
-            reward = 0
             done = False
 
         info["balance"] = self.player.balance
-
         return self._get_obs(), reward, done, False, info
 
     def _hit(self):
@@ -232,7 +241,7 @@ class BlackJack(gym.Env):
         info["winnings"] = winnings
         player.balance += winnings
 
-        const = 0.5
+        const = 0.75
         if result > 0:
             penalty = (self.max_bet - player.bet) * const
         elif result < 0:
@@ -261,9 +270,11 @@ class BlackJack(gym.Env):
             "deck_remaining": np.array([self.deck.deck_remaining], dtype=np.float32),
             "deck_draw_probs": np.array(self.deck.probability_of_drawing(), dtype=np.float32),
             "is_betting_phase": np.array([int(self.is_betting_phase)], dtype=np.float32),
-            "seen_card_counts": np.array(self.card_counter.seen_card_counts.copy(), dtype=np.float32),
+            "seen_card_counts": np.array(self.card_counter.normalized_seen_card_counts(num_decks=self.num_decks).copy(),
+                                         dtype=np.float32),
             "can_double": np.array([int(len(player.hand) == 2)], dtype=np.float32),
-            "true_count": np.array([self.card_counter.true_count(self.deck.deck_remaining, self.num_decks)], dtype=np.float32),
+            "true_count": np.array([self.card_counter.true_count(self.deck.deck_remaining, self.num_decks)],
+                                   dtype=np.float32),
         }
 
     def get_parameters(self):
@@ -271,7 +282,7 @@ class BlackJack(gym.Env):
 
     def get_legal_moves(self):
         if self.is_betting_phase:
-            return list(range(3, 3 + self.bet_bins))  # Betting actions: 3 to 11
+            return list(range(3, 3 + self.bet_bins))
         legal_moves = [Action.HIT.value, Action.STAND.value]
         if len(self.player.hand) == 2:
             legal_moves.append(Action.DOUBLE.value)
@@ -291,11 +302,4 @@ class BlackJack(gym.Env):
 
     def __repr__(self):
         return f"BlackJack(num_decks={self.num_decks}, dealer={self.dealer}, deck_remaining={len(self.deck)})"
-
-
-if __name__ == "__main__":
-    from gymnasium.utils.env_checker import check_env
-    import gymnasium as gym
-    env = BlackJack()
-    check_env(env)
 

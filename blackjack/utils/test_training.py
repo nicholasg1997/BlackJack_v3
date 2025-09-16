@@ -99,9 +99,11 @@ def make_blackjack_env(num_decks=1):
 
 def main():
     NUM_ENVS = 64
-    TOTAL_TIMESTEPS = 40_000_000
+    TOTAL_TIMESTEPS = 30_000_000
     initial_ent_coef = 0.5
     final_ent_coef = 0.005
+
+    NUM_DECKS= 1
 
     POLICY_KWARGS = dict(
         net_arch=dict(pi=[256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
@@ -120,12 +122,12 @@ def main():
     eval_env.seed(42)
 
     metrics_callback = ReturnMetricsCallback(verbose=0)
-    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path="./logs/best_model_ev/", verbose=1)
+    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path=f"./logs/best_model_ev/ppobestmodel_decks_{NUM_DECKS}", verbose=1)
 
     eval_callback = CustomMaskableEvalCallback(
         metrics_callback,
         eval_env,
-        best_model_save_path="./logs/best_model/",
+        best_model_save_path=f"./logs/best_model/ppomodel_decks_{NUM_DECKS}",
         log_path="./logs/eval_logs/",
         eval_freq=EVAL_FREQ_PER_ENV,
         n_eval_episodes=512,
@@ -164,8 +166,8 @@ def main():
     )
 
     print("--- Training complete ---")
-    model.save("blackjack_agent_shaped_reward.zip")
-    vec_env.save("vec_normalize_stats_shaped.pkl")
+    model.save(f"blackjack_agent_shaped_reward_{NUM_DECKS}decks.zip")
+    vec_env.save(f"vec_normalize_stats_shaped_{NUM_DECKS}decks.pkl")
     vec_env.close()
 
 
