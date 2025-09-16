@@ -13,6 +13,42 @@ import os
 from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from sb3_contrib.common.maskable.evaluation import evaluate_policy as maskable_evaluate_policy
 
+import numpy as np
+
+
+class DeckScheduleCallback(BaseCallback):
+    def __init__(self, total_steps: int, update_freq: int = 20480, switch_progress: float = 0.7, verbose: int = 1):
+        super().__init__(verbose)
+        self.total_steps = total_steps
+        self.update_freq = update_freq
+        self.switch_progress = switch_progress # Progress at which to switch to uniform distribution
+        self.deck_options = [2, 3, 4, 5, 6]
+
+    def _on_step(self) -> bool:
+        # Update probabilities periodically
+        if self.n_calls % self.update_freq == 0:
+            # Calculate current progress in the curriculum phase
+            progress = self.num_timesteps / (self.total_steps * self.switch_progress)
+            progress = min(progress, 1.0) # Cap progress at 1.0
+
+            # Linearly interpolate between the initial and final probabilities
+            # Initial: 50% for 2 decks, 50% for 3 decks
+            initial_probs = np.array([0.5, 0.5, 0.0, 0.0, 0.0])
+            # Final: 20% for each deck size (uniform)
+            final_probs = np.array([0.2, 0.2, 0.2, 0.2, 0.2])
+
+            current_probs = initial_probs * (1 - progress) + final_probs * progress
+            current_probs /= current_probs.sum() # Ensure it sums to 1
+
+            # Use env_method to call the update function on each parallel environment
+            self.training_env.env_method("update_deck_probs", current_probs)
+
+            if self.verbose > 0:
+                self.logger.record("deck/progress", progress)
+                # Log the probability of choosing 6 decks to see the change
+                self.logger.record("deck/prob_6_decks", current_probs[-1])
+        return True
+
 class CustomMaskableEvalCallback(MaskableEvalCallback):
     def __init__(self, metrics_callback: ReturnMetricsCallback, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -99,7 +135,8 @@ def make_blackjack_env(num_decks=1):
 
 def main():
     NUM_ENVS = 64
-    TOTAL_TIMESTEPS = 40_000_000
+    NUM_DECKS = 2
+    TOTAL_TIMESTEPS = 60_000_000
     initial_ent_coef = 0.5
     final_ent_coef = 0.005
 
@@ -111,24 +148,26 @@ def main():
     EVAL_FREQ_PER_ENV = EVAL_FREQ_TOTAL_STEPS // NUM_ENVS
 
     print("--- Setting up environment for training ---")
-    vec_env = SubprocVecEnv([make_blackjack_env() for _ in range(NUM_ENVS)])
+    vec_env = SubprocVecEnv([make_blackjack_env(num_decks=NUM_DECKS) for _ in range(NUM_ENVS)])
     vec_env = VecNormalize(vec_env, norm_reward=True, norm_obs=True, gamma=0.99)
 
-    eval_env = SubprocVecEnv([make_blackjack_env() for _ in range(128)])
+    eval_env = SubprocVecEnv([make_blackjack_env(num_decks=6) for _ in range(128)])
     eval_env = VecNormalize(eval_env, norm_reward=True,
                             norm_obs=True, gamma=0.99, training=False)
     eval_env.seed(42)
 
     metrics_callback = ReturnMetricsCallback(verbose=0)
-    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path="./logs/best_model_ev/", verbose=1)
+    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path="./logs/multideck/best_model_ev/", verbose=1)
+
+    deck_schedule_cb = DeckScheduleCallback(total_steps=TOTAL_TIMESTEPS, update_freq=EVAL_FREQ_PER_ENV, verbose=1)
 
     eval_callback = CustomMaskableEvalCallback(
         metrics_callback,
         eval_env,
-        best_model_save_path="./logs/best_model/",
-        log_path="./logs/eval_logs/",
+        best_model_save_path="./logs/multideck/best_model/",
+        log_path="./logs/multideck/eval_logs/",
         eval_freq=EVAL_FREQ_PER_ENV,
-        n_eval_episodes=512,
+        n_eval_episodes=1024,
         deterministic=True,
         render=False,
         callback_on_new_best=save_on_best_eval_cb,
@@ -152,6 +191,7 @@ def main():
         policy_kwargs=POLICY_KWARGS,
     )
 
+
     print(f"--- Starting end-to-end training for {TOTAL_TIMESTEPS} timesteps ---")
 
     model.learn(
@@ -160,12 +200,13 @@ def main():
         callback=[BlackjackMetricsCallback(),
                   metrics_callback,
                   EntropyScheduleCallback(initial_ent_coef, final_ent_coef, int(TOTAL_TIMESTEPS*0.5)),
-                  eval_callback],
+                  eval_callback,
+                  deck_schedule_cb],
     )
 
     print("--- Training complete ---")
-    model.save("blackjack_agent_shaped_reward.zip")
-    vec_env.save("vec_normalize_stats_shaped.pkl")
+    model.save("blackjack_agent_multideck.zip")
+    vec_env.save("vec_normalize_stats_multideck.pkl")
     vec_env.close()
 
 

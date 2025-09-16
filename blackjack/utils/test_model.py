@@ -11,8 +11,8 @@ import matplotlib.pyplot as plt
 
 
 #MODEL_PATH = "blackjack_agent_shaped_reward.zip"
-MODEL_PATH = "logs/best_model/best_model.zip"
-VEC_NORMALIZE_PATH = "vec_normalize_stats_shaped.pkl"
+MODEL_PATH = "blackjack_agent_multideck"
+VEC_NORMALIZE_PATH = "vec_normalize_stats_multideck.pkl"
 
 def mask_fn(env: gym.Env):
     return env.get_action_mask()
@@ -26,7 +26,7 @@ def make_blackjack_env(num_decks=6):
     return _init
 
 def evaluate(num_episodes=1_000):
-    venv = DummyVecEnv([lambda: BlackJack(num_decks=1)])
+    venv = DummyVecEnv([lambda: BlackJack(num_decks=2)])
     venv = VecNormalize.load(VEC_NORMALIZE_PATH, venv)
     venv.training = False
     venv.norm_reward = False
@@ -89,4 +89,4 @@ def evaluate(num_episodes=1_000):
 
 if __name__ == "__main__":
 
-    evaluate(num_episodes=25_000)
+    evaluate(num_episodes=10_000)
