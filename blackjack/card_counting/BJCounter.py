@@ -5,6 +5,11 @@ class CardCounter:
         self.running_count = 0.0
         self.seen_card_counts = np.zeros(10, dtype=np.float32)
 
+    def normalized_seen_card_counts(self, num_decks) -> np.ndarray:
+        cards_per_rank = np.full(10, 4 * num_decks, dtype=np.float32)
+        cards_per_rank[8] = 12 * num_decks
+        return self.seen_card_counts / cards_per_rank
+
     def update_count(self, card: int) -> None:
         if 2 <= card <= 6:
             self.running_count += 1
