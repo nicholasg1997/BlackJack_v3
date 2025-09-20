@@ -8,12 +8,6 @@ from blackjack.callbacks.callbacks import *
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 import gymnasium as gym
-from stable_baselines3.common.callbacks import BaseCallback
-import math
-import os
-
-from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
-from sb3_contrib.common.maskable.evaluation import evaluate_policy as maskable_evaluate_policy
 
 def mask_fn(env: gym.Env):
     return env.get_action_mask()
@@ -36,6 +30,7 @@ def main():
 
     POLICY_KWARGS = dict(
         net_arch=dict(pi=[256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
+        optimizer_kwargs={"weight_decay": 1e-4}
     )
 
     EVAL_FREQ_TOTAL_STEPS = 100_000
@@ -48,7 +43,8 @@ def main():
     eval_env = SubprocVecEnv([make_blackjack_env(num_decks=NUM_DECKS) for _ in range(128)])
     eval_env = VecNormalize(eval_env, norm_reward=True,
                             norm_obs=True, gamma=0.99, training=False)
-    eval_env.seed(42)
+    eval_env.obs_rms = vec_env.obs_rms
+    eval_env.ret_rms = vec_env.ret_rms
 
     metrics_callback = ReturnMetricsCallback(verbose=0)
     save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path=f"./logs/best_model_ev/ppobestmodel_decks_{NUM_DECKS}", verbose=1)
@@ -69,14 +65,15 @@ def main():
     model = MaskablePPO(
         "MultiInputPolicy",
         vec_env,
-        learning_rate=exponential_decay_schedule(initial_value=3e-4, final_value=1e-5, decay_rate=5.0),
+        learning_rate=exponential_decay_schedule(initial_value=3e-4, final_value=1e-6, decay_rate=3.0),
         n_steps=2048,
         batch_size=256,
-        n_epochs=20,
+        n_epochs=10,
         gamma=0.99,
         gae_lambda=0.98,
         clip_range=0.2,
         vf_coef=0.75,
+        target_kl=0.01,
         ent_coef=initial_ent_coef,
         verbose=1,
         tensorboard_log="./logs/blackjack_ppo_shaped/",
