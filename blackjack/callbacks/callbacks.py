@@ -54,6 +54,8 @@ class SaveOnBestEV(BaseCallback):
             self.best_ev = current_ev
             full_path = os.path.join(self.save_path, f"best_model_ev.zip")
             self.model.save(full_path)
+            stats_path = os.path.join(self.save_path, "best_vec_normalize.pkl")
+            self.training_env.save(stats_path)
             if self.verbose > 0:
                 print(f"New best EV: {self.best_ev:.4f} at step {self.num_timesteps} (saved to {full_path})")
         return True
