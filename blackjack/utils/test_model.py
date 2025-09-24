@@ -10,9 +10,11 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-#MODEL_PATH = "blackjack_agent_shaped_reward.zip"
-MODEL_PATH = "logs/best_model/best_model.zip"
-VEC_NORMALIZE_PATH = "vec_normalize_stats_shaped.pkl"
+#MODEL_PATH = "logs/best_model_ev/ppobestmodel_decks_4/best_model_ev.zip"
+#VEC_NORMALIZE_PATH = "logs/best_model_ev/ppobestmodel_decks_4/best_vec_normalize.pkl"
+MODEL_PATH = "blackjack_agent_shaped_reward_4decks.zip"
+VEC_NORMALIZE_PATH = "vec_normalize_stats_shaped_4decks.pkl"
+
 
 def mask_fn(env: gym.Env):
     return env.get_action_mask()
@@ -26,7 +28,7 @@ def make_blackjack_env(num_decks=6):
     return _init
 
 def evaluate(num_episodes=1_000):
-    venv = DummyVecEnv([lambda: BlackJack(num_decks=1)])
+    venv = DummyVecEnv([lambda: BlackJack(num_decks=4, min_bet=2, max_bet=100)])
     venv = VecNormalize.load(VEC_NORMALIZE_PATH, venv)
     venv.training = False
     venv.norm_reward = False
@@ -39,9 +41,10 @@ def evaluate(num_episodes=1_000):
     placed_bets = []
     draws = 0
 
-    obs = venv.reset()
+    #obs = venv.reset()
     with tqdm(total=num_episodes) as pbar:
         for ep in range(num_episodes):
+            obs = venv.reset()
             done = False
             while not done:
                 action, _states = model.predict(obs, deterministic=True,
@@ -77,7 +80,7 @@ def evaluate(num_episodes=1_000):
     print(f"Max Win: {max(all_episode_rewards)}, Max Loss: {min(all_episode_rewards)}")
     print(f"frequency of max win: {all_episode_rewards.count(max(all_episode_rewards))}, frequency of max loss: {all_episode_rewards.count(min(all_episode_rewards))}")
     print(f"average bet placed: {sum(placed_bets) / len(placed_bets) if placed_bets else 0}")
-    print(placed_bets)
+    #print(placed_bets)
     plt.figure(figsize=(12, 6))
     plt.plot(total_balance)
     plt.xlabel('Episode')
@@ -88,5 +91,4 @@ def evaluate(num_episodes=1_000):
 
 
 if __name__ == "__main__":
-
-    evaluate(num_episodes=25_000)
+    evaluate(num_episodes=50_000)
