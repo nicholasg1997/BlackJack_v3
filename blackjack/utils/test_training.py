@@ -8,13 +8,20 @@ from blackjack.callbacks.callbacks import *
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 import gymnasium as gym
+from blackjack.env.rules import BlackJackRules
+
+rules = BlackJackRules(
+    num_decks=4,
+    min_bet=2,
+    max_bet=100,
+)
 
 def mask_fn(env: gym.Env):
     return env.get_action_mask()
 
-def make_blackjack_env(num_decks=1, min_bet=2, max_bet=10):
+def make_blackjack_env(bj_rules=rules):
     def _init():
-        env = BlackJack(num_decks=num_decks, min_bet=min_bet, max_bet=max_bet)
+        env = BlackJack(rules=bj_rules, model="PPO")
         env = ActionMasker(env, mask_fn)
         env = Monitor(env)
         return env
@@ -26,10 +33,6 @@ def main():
     initial_ent_coef = 0.25
     final_ent_coef = 0.01
 
-    NUM_DECKS= 4
-    MIN_BET = 2
-    MAX_BET = 100
-
     POLICY_KWARGS = dict(
         net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
         optimizer_kwargs={"weight_decay": 1e-4}
@@ -39,21 +42,21 @@ def main():
     EVAL_FREQ_PER_ENV = EVAL_FREQ_TOTAL_STEPS // NUM_ENVS
 
     print("--- Setting up environment for training ---")
-    vec_env = SubprocVecEnv([make_blackjack_env(num_decks=NUM_DECKS, min_bet=MIN_BET, max_bet=MAX_BET) for _ in range(NUM_ENVS)])
+    vec_env = SubprocVecEnv([make_blackjack_env(rules) for _ in range(NUM_ENVS)])
     vec_env = VecNormalize(vec_env, norm_reward=False, norm_obs=True, gamma=0.99)
 
-    eval_env = SubprocVecEnv([make_blackjack_env(num_decks=NUM_DECKS, min_bet=MIN_BET, max_bet=MAX_BET) for _ in range(128)])
+    eval_env = SubprocVecEnv([make_blackjack_env(rules) for _ in range(128)])
     eval_env = VecNormalize(eval_env, norm_reward=False, norm_obs=True, gamma=0.99, training=False)
     eval_env.obs_rms = vec_env.obs_rms
     eval_env.ret_rms = vec_env.ret_rms
 
     metrics_callback = ReturnMetricsCallback(verbose=0)
-    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path=f"./logs/best_model_ev/ppobestmodel_decks_{NUM_DECKS}", verbose=1)
+    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path=f"./logs/best_model_ev/ppobestmodel_decks_{rules.num_decks}", verbose=1)
 
     eval_callback = CustomMaskableEvalCallback(
         metrics_callback,
         eval_env,
-        best_model_save_path=f"./logs/best_model/ppomodel_decks_{NUM_DECKS}",
+        best_model_save_path=f"./logs/best_model/ppomodel_decks_{rules.num_decks}decks",
         log_path="./logs/eval_logs/",
         eval_freq=EVAL_FREQ_PER_ENV,
         n_eval_episodes=512,
@@ -93,8 +96,8 @@ def main():
     )
 
     print("--- Training complete ---")
-    model.save(f"blackjack_agent_shaped_reward_{NUM_DECKS}decks.zip")
-    vec_env.save(f"vec_normalize_stats_shaped_{NUM_DECKS}decks.pkl")
+    model.save(f"blackjack_agent_shaped_reward_{rules.num_decks}decks.zip")
+    vec_env.save(f"vec_normalize_stats_shaped_{rules.num_decks}decks.pkl")
     vec_env.close()
 
 
