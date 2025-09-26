@@ -9,26 +9,33 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+from blackjack.env.rules import BlackJackRules
 
 #MODEL_PATH = "logs/best_model_ev/ppobestmodel_decks_4/best_model_ev.zip"
 #VEC_NORMALIZE_PATH = "logs/best_model_ev/ppobestmodel_decks_4/best_vec_normalize.pkl"
 MODEL_PATH = "blackjack_agent_shaped_reward_4decks.zip"
 VEC_NORMALIZE_PATH = "vec_normalize_stats_shaped_4decks.pkl"
 
+rules = BlackJackRules(
+    num_decks=4,
+    min_bet=2,
+    max_bet=100,
+)
+
 
 def mask_fn(env: gym.Env):
     return env.get_action_mask()
 
 
-def make_blackjack_env(num_decks=6):
+def make_blackjack_env(bj_rules=rules):
     def _init():
-        env = BlackJack(num_decks=num_decks)
+        env = BlackJack(rules=bj_rules)
         env = ActionMasker(env, mask_fn)
         return env
     return _init
 
 def evaluate(num_episodes=1_000):
-    venv = DummyVecEnv([lambda: BlackJack(num_decks=4, min_bet=2, max_bet=100)])
+    venv = DummyVecEnv([lambda: BlackJack()])
     venv = VecNormalize.load(VEC_NORMALIZE_PATH, venv)
     venv.training = False
     venv.norm_reward = False
@@ -91,4 +98,4 @@ def evaluate(num_episodes=1_000):
 
 
 if __name__ == "__main__":
-    evaluate(num_episodes=50_000)
+    evaluate(num_episodes=100_000)
