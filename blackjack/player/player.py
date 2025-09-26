@@ -41,7 +41,7 @@ class Player:
     @property
     def one_hot_total(self) -> list[int]:
         one_hot_total = [0] * 23
-        total = min(23, self.hand_total)
+        total = min(22, self.hand_total)
         one_hot_total[total] = 1
         return one_hot_total
 
