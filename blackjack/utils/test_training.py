@@ -8,13 +8,20 @@ from blackjack.callbacks.callbacks import *
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 import gymnasium as gym
+from blackjack.env.rules import BlackJackRules
+
+rules = BlackJackRules(
+    num_decks=4,
+    min_bet=2,
+    max_bet=100,
+)
 
 def mask_fn(env: gym.Env):
     return env.get_action_mask()
 
-def make_blackjack_env(num_decks=1):
+def make_blackjack_env(bj_rules=rules):
     def _init():
-        env = BlackJack(num_decks=num_decks)
+        env = BlackJack(rules=bj_rules, model="PPO")
         env = ActionMasker(env, mask_fn)
         env = Monitor(env)
         return env
@@ -23,13 +30,11 @@ def make_blackjack_env(num_decks=1):
 def main():
     NUM_ENVS = 64
     TOTAL_TIMESTEPS = 40_000_000
-    initial_ent_coef = 0.5
-    final_ent_coef = 0.005
-
-    NUM_DECKS= 2
+    initial_ent_coef = 0.25
+    final_ent_coef = 0.01
 
     POLICY_KWARGS = dict(
-        net_arch=dict(pi=[256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
+        net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
         optimizer_kwargs={"weight_decay": 1e-4}
     )
 
@@ -37,22 +42,21 @@ def main():
     EVAL_FREQ_PER_ENV = EVAL_FREQ_TOTAL_STEPS // NUM_ENVS
 
     print("--- Setting up environment for training ---")
-    vec_env = SubprocVecEnv([make_blackjack_env(num_decks=NUM_DECKS) for _ in range(NUM_ENVS)])
-    vec_env = VecNormalize(vec_env, norm_reward=True, norm_obs=True, gamma=0.99)
+    vec_env = SubprocVecEnv([make_blackjack_env(rules) for _ in range(NUM_ENVS)])
+    vec_env = VecNormalize(vec_env, norm_reward=False, norm_obs=True, gamma=0.99)
 
-    eval_env = SubprocVecEnv([make_blackjack_env(num_decks=NUM_DECKS) for _ in range(128)])
-    eval_env = VecNormalize(eval_env, norm_reward=True,
-                            norm_obs=True, gamma=0.99, training=False)
+    eval_env = SubprocVecEnv([make_blackjack_env(rules) for _ in range(128)])
+    eval_env = VecNormalize(eval_env, norm_reward=False, norm_obs=True, gamma=0.99, training=False)
     eval_env.obs_rms = vec_env.obs_rms
     eval_env.ret_rms = vec_env.ret_rms
 
     metrics_callback = ReturnMetricsCallback(verbose=0)
-    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path=f"./logs/best_model_ev/ppobestmodel_decks_{NUM_DECKS}", verbose=1)
+    save_on_best_eval_cb = SaveOnBestEV(metrics_callback, save_path=f"./logs/best_model_ev/ppobestmodel_decks_{rules.num_decks}", verbose=1)
 
     eval_callback = CustomMaskableEvalCallback(
         metrics_callback,
         eval_env,
-        best_model_save_path=f"./logs/best_model/ppomodel_decks_{NUM_DECKS}",
+        best_model_save_path=f"./logs/best_model/ppomodel_decks_{rules.num_decks}decks",
         log_path="./logs/eval_logs/",
         eval_freq=EVAL_FREQ_PER_ENV,
         n_eval_episodes=512,
@@ -65,7 +69,7 @@ def main():
     model = MaskablePPO(
         "MultiInputPolicy",
         vec_env,
-        learning_rate=exponential_decay_schedule(initial_value=3e-4, final_value=1e-6, decay_rate=3.0),
+        learning_rate=exponential_decay_schedule(initial_value=3e-4, final_value=5e-7, decay_rate=2.0),
         n_steps=2048,
         batch_size=256,
         n_epochs=10,
@@ -87,13 +91,13 @@ def main():
         use_masking=True,
         callback=[BlackjackMetricsCallback(),
                   metrics_callback,
-                  EntropyScheduleCallback(initial_ent_coef, final_ent_coef, int(TOTAL_TIMESTEPS*0.5)),
+                  EntropyScheduleCallback(initial_ent_coef, final_ent_coef, int(TOTAL_TIMESTEPS*0.75)),
                   eval_callback],
     )
 
     print("--- Training complete ---")
-    model.save(f"blackjack_agent_shaped_reward_{NUM_DECKS}decks.zip")
-    vec_env.save(f"vec_normalize_stats_shaped_{NUM_DECKS}decks.pkl")
+    model.save(f"blackjack_agent_shaped_reward_{rules.num_decks}decks.zip")
+    vec_env.save(f"vec_normalize_stats_shaped_{rules.num_decks}decks.pkl")
     vec_env.close()
 
 
