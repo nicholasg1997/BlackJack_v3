@@ -11,9 +11,10 @@ import gymnasium as gym
 from blackjack.env.rules import BlackJackRules
 
 rules = BlackJackRules(
-    num_decks=4,
+    num_decks=6,
     min_bet=2,
     max_bet=100,
+    allow_split=True
 )
 
 def mask_fn(env: gym.Env):
@@ -29,16 +30,16 @@ def make_blackjack_env(bj_rules=rules):
 
 def main():
     NUM_ENVS = 64
-    TOTAL_TIMESTEPS = 40_000_000
-    initial_ent_coef = 0.25
+    TOTAL_TIMESTEPS = 100_000_000
+    initial_ent_coef = 1.00
     final_ent_coef = 0.01
 
     POLICY_KWARGS = dict(
-        net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128], ortho_init=True), # try bigger network next pi=[512, 256, 128], vf=[1024, 512, 256, 128]
+        net_arch=dict(pi=[256, 128, 64], vf=[512, 256, 128], ortho_init=True), # pi=[512, 256, 128, 64], vf=[1024, 512, 256, 128]
         optimizer_kwargs={"weight_decay": 1e-4}
     )
 
-    EVAL_FREQ_TOTAL_STEPS = 100_000
+    EVAL_FREQ_TOTAL_STEPS = 50_000
     EVAL_FREQ_PER_ENV = EVAL_FREQ_TOTAL_STEPS // NUM_ENVS
 
     print("--- Setting up environment for training ---")
@@ -59,7 +60,7 @@ def main():
         best_model_save_path=f"./logs/best_model/ppomodel_decks_{rules.num_decks}decks",
         log_path="./logs/eval_logs/",
         eval_freq=EVAL_FREQ_PER_ENV,
-        n_eval_episodes=512,
+        n_eval_episodes=2048,
         deterministic=True,
         render=False,
         callback_on_new_best=save_on_best_eval_cb,
@@ -69,15 +70,15 @@ def main():
     model = MaskablePPO(
         "MultiInputPolicy",
         vec_env,
-        learning_rate=exponential_decay_schedule(initial_value=3e-4, final_value=5e-7, decay_rate=2.0),
-        n_steps=2048,
-        batch_size=256,
+        learning_rate=exponential_decay_schedule(initial_value=5e-5, final_value=5e-7, decay_rate=2.0),
+        n_steps=8192,
+        batch_size=1024,
         n_epochs=10,
         gamma=0.99,
         gae_lambda=0.98,
         clip_range=0.2,
         vf_coef=0.75,
-        target_kl=0.01,
+        target_kl=0.03,
         ent_coef=initial_ent_coef,
         verbose=1,
         tensorboard_log="./logs/blackjack_ppo_shaped/",
@@ -91,7 +92,7 @@ def main():
         use_masking=True,
         callback=[BlackjackMetricsCallback(),
                   metrics_callback,
-                  EntropyScheduleCallback(initial_ent_coef, final_ent_coef, int(TOTAL_TIMESTEPS*0.75)),
+                  EntropyScheduleCallback(initial_ent_coef, final_ent_coef, int(TOTAL_TIMESTEPS*0.80)),
                   eval_callback],
     )
 
