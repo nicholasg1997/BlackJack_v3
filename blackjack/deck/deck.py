@@ -1,7 +1,6 @@
 import random
 from collections import Counter
 import numpy as np
-import torch as th
 
 class Deck:
     def __init__(self, num_decks: int = 1, rounding_precision: int = 3):

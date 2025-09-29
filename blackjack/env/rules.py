@@ -14,8 +14,8 @@ class BlackJackRules:
     # player allowed moves
     allow_double: bool = True
     allow_surrender: bool = False # Not yet implemented
-    allow_split: bool = False     # Not yet implemented
-    max_splits: int = 3           # Not yet implemented
+    allow_split: bool = True     # Not yet implemented
+    max_splits: int = 4
     double_after_split: bool = False # Not yet implemented
     allow_insurance: bool = False # Not yet implemented
     resplit_aces: bool = False   # Not yet implemented
