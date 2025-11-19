@@ -127,4 +127,4 @@ def evaluate(num_episodes=30_000):
 
 
 if __name__ == "__main__":
-    evaluate(num_episodes=100_000)
+    evaluate(num_episodes=50_000)

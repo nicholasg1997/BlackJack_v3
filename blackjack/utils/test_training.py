@@ -11,7 +11,7 @@ import gymnasium as gym
 from blackjack.env.rules import BlackJackRules
 
 rules = BlackJackRules(
-    num_decks=6,
+    num_decks=10,
     min_bet=2,
     max_bet=100,
     allow_split=True
@@ -74,11 +74,11 @@ def main():
         n_steps=8192,
         batch_size=1024,
         n_epochs=10,
-        gamma=0.99,
+        gamma=0.95,
         gae_lambda=0.98,
         clip_range=0.2,
         vf_coef=0.75,
-        target_kl=0.03,
+        target_kl=0.015,
         ent_coef=initial_ent_coef,
         verbose=1,
         tensorboard_log="./logs/blackjack_ppo_shaped/",

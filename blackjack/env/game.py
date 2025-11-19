@@ -146,9 +146,6 @@ class BlackJack(gym.Env):
                 next_player_idx += 1
             if next_player_idx < len(self.player.hands):
                 self.player.current_hand_index = next_player_idx
-                #if len(self.player.current_hand.cards) == 1:
-                    #self.player.current_hand.add_card(self.draw_card())
-                turn_over = False
             else:
                 self.dealer_autoplay()
                 reward = self._get_total_reward(info)
@@ -180,12 +177,13 @@ class BlackJack(gym.Env):
         assert len(current_hand.cards) == 2 and current_hand.cards[0] == current_hand.cards[1]
 
         card1, card2 = current_hand.cards
-        current_hand.cards = [card1]
-        current_hand.aces = 1 if card1 == 11 else 0
+
+        current_hand.cards = []
+        current_hand.aces = 0
+        current_hand.add_card(card1)
 
         new_hand = Hand(bet=current_hand.bet)
-        new_hand.cards = [card2]
-        new_hand.aces = 1 if card2 == 11 else 0
+        new_hand.add_card(card2)
 
         self.player.hands.insert(self.player.current_hand_index + 1, new_hand)
 
@@ -232,7 +230,7 @@ class BlackJack(gym.Env):
         hand_info["winnings"] = winnings
         self.player.balance += winnings
 
-        alpha = 0.01
+        alpha = 0.05
         if result > 0:
             penalty = (self.rules.max_bet - hand.bet) * alpha
         elif result < 0:
