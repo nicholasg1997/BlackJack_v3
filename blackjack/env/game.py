@@ -117,8 +117,16 @@ class BlackJack(gym.Env):
         self.deal_starting_hand()
         self.is_betting_phase = False
 
+        if self.dealer.has_blackjack or self.player.current_hand.has_blackjack:
+            self.player.current_hand.done = True
+            reward = self._get_total_reward(info)
+            terminated = True
+            info["balance"] = self.player.balance
+            return self._get_obs(), reward, terminated, False, info
+
         reward = 0.0
         terminated = False
+        info["balance"] = self.player.balance
         return self._get_obs(), reward, terminated, False, info
 
 
@@ -195,15 +203,29 @@ class BlackJack(gym.Env):
 
     def _get_reward_for_hand(self, hand: Hand, dealer_total: int, hand_info: dict) -> float:
         hand_info["bet"] = hand.bet
-        if hand.has_blackjack and not self.dealer.has_blackjack:
-            result = 1.5
-            hand_info["win"] = True
-            hand_info["loss"] = False
-            hand_info["push"] = False
-        elif hand.is_bust:
+        dealer_bj = self.dealer.has_blackjack
+        player_bj = hand.has_blackjack
+
+        # Standard ordering: busts lose first; naturals dominate totals (dealer BJ beats non-natural 21).
+        if hand.is_bust:
             result = -1
             hand_info["win"] = False
             hand_info["loss"] = True
+            hand_info["push"] = False
+        elif dealer_bj and player_bj:
+            result = 0
+            hand_info["win"] = False
+            hand_info["loss"] = False
+            hand_info["push"] = True
+        elif dealer_bj:
+            result = -1
+            hand_info["win"] = False
+            hand_info["loss"] = True
+            hand_info["push"] = False
+        elif player_bj:
+            result = 1.5
+            hand_info["win"] = True
+            hand_info["loss"] = False
             hand_info["push"] = False
         elif self.dealer.is_bust:
             result = 1
@@ -304,6 +326,8 @@ class BlackJack(gym.Env):
     def get_legal_moves(self):
         if self.is_betting_phase:
             return list(range(3, 3 + self.bet_bins))
+        if self.player.current_hand.has_blackjack:
+            return [Action.STAND.value]
         legal_moves = [Action.HIT.value, Action.STAND.value]
         if len(self.player.current_hand.cards) == 2:
             if self.rules.allow_double:
@@ -319,14 +343,15 @@ class BlackJack(gym.Env):
         if self.is_betting_phase:
             mask[len(Action):] = 1
         else:
-            mask[Action.HIT.value] = 1
             mask[Action.STAND.value] = 1
-            if len(self.player.current_hand.cards) == 2 and self.rules.allow_double:
-                mask[Action.DOUBLE.value] = 1
-            if (len(self.player.current_hand.cards) == 2 and self.rules.allow_split
-                and self.player.current_hand.cards[0] == self.player.current_hand.cards[1]
-                    and (len(self.player.hands) < self.rules.max_splits)):
-                mask[Action.SPLIT.value] = 1
+            if not self.player.current_hand.has_blackjack:
+                mask[Action.HIT.value] = 1
+                if len(self.player.current_hand.cards) == 2 and self.rules.allow_double:
+                    mask[Action.DOUBLE.value] = 1
+                if (len(self.player.current_hand.cards) == 2 and self.rules.allow_split
+                    and self.player.current_hand.cards[0] == self.player.current_hand.cards[1]
+                        and (len(self.player.hands) < self.rules.max_splits)):
+                    mask[Action.SPLIT.value] = 1
         assert mask.sum() > 0, "No legal moves available!"
         return mask
 
